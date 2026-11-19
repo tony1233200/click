@@ -16,6 +16,7 @@ from click.shell_completion import FishComplete
 from click.shell_completion import PowerShellComplete
 from click.shell_completion import shell_complete
 from click.shell_completion import ShellComplete
+from click.shell_completion import split_arg_string_powershell
 from click.types import Choice
 from click.types import File
 from click.types import Path
@@ -615,3 +616,49 @@ def test_powershell_format_completion_escapes_help():
     # produced by ZshComplete.
     item = CompletionItem("--at")
     assert pc.format_completion(item) == "plain\n--at\n_"
+
+
+@pytest.mark.parametrize(
+    ("string", "expected"),
+    [
+        # A backslash is a literal character, not an escape, so Windows
+        # paths survive the split unchanged.
+        (r"mycli sub C:\Users\ann\doc", ["mycli", "sub", r"C:\Users\ann\doc"]),
+        (r"mycli sub C:\Temp\\", ["mycli", "sub", r"C:\Temp\\"]),
+        ("mycli sub", ["mycli", "sub"]),
+        ("", []),
+        ('mycli "my file"', ["mycli", "my file"]),
+        ("mycli 'my file'", ["mycli", "my file"]),
+        # A doubled single quote is an escaped quote.
+        ("mycli 'it''s'", ["mycli", "it's"]),
+        # The backtick is the escape character.
+        ("mycli a` b", ["mycli", "a b"]),
+        ('mycli "a`"b"', ["mycli", 'a"b']),
+        # Inside single quotes a backtick is literal.
+        ("mycli 'a`b'", ["mycli", "a`b"]),
+        # An incomplete string is used as-is.
+        ('mycli "incomplete', ["mycli", "incomplete"]),
+        ("mycli ''", ["mycli", ""]),
+    ],
+)
+def test_split_arg_string_powershell(string, expected):
+    assert split_arg_string_powershell(string) == expected
+
+
+def test_powershell_completion_args_keep_windows_path(monkeypatch):
+    monkeypatch.setenv("COMP_WORDS", r"mycli C:\Users\ann\doc")
+    monkeypatch.setenv("COMP_CWORD", "1")
+    pc = PowerShellComplete(Command("mycli"), {}, "mycli", "_X_COMPLETE")
+    args, incomplete = pc.get_completion_args()
+    assert args == []
+    assert incomplete == r"C:\Users\ann\doc"
+
+
+def test_powershell_source_quotes_prog_name():
+    pc = PowerShellComplete(Command("x"), {}, "my cli", "_X_COMPLETE")
+    source = pc.source()
+    assert "-CommandName 'my cli'" in source
+    assert "& 'my cli'" in source
+
+    pc = PowerShellComplete(Command("x"), {}, "it's", "_X_COMPLETE")
+    assert "-CommandName 'it''s'" in pc.source()

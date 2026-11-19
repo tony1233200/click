@@ -211,7 +211,7 @@ complete --no-files --command %(prog_name)s --arguments \
 # COMP_WORDS so the Python side can reuse the same shlex-based splitting
 # used by the bash/zsh completers.
 _SOURCE_POWERSHELL = """\
-Register-ArgumentCompleter -Native -CommandName %(prog_name)s -ScriptBlock {
+Register-ArgumentCompleter -Native -CommandName '%(prog_name)s' -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
 
     $prev_complete = $env:%(complete_var)s
@@ -227,7 +227,7 @@ Register-ArgumentCompleter -Native -CommandName %(prog_name)s -ScriptBlock {
     }
 
     try {
-        $response = & %(prog_name)s 2>$null
+        $response = & '%(prog_name)s' 2>$null
     } finally {
         $env:%(complete_var)s = $prev_complete
         $env:COMP_WORDS = $prev_words
@@ -522,8 +522,16 @@ class PowerShellComplete(ShellComplete):
     name: t.ClassVar[str] = "powershell"
     source_template: t.ClassVar[str] = _SOURCE_POWERSHELL
 
+    def source_vars(self) -> _SourceVarsDict:
+        vars = super().source_vars()
+        # The source template interpolates the program name inside single
+        # quotes. Escape any single quote it contains by doubling it, which
+        # is how PowerShell escapes a quote in a single-quoted string.
+        vars["prog_name"] = self.prog_name.replace("'", "''")
+        return vars
+
     def get_completion_args(self) -> tuple[list[str], str]:
-        cwords = split_arg_string(os.environ["COMP_WORDS"])
+        cwords = split_arg_string_powershell(os.environ["COMP_WORDS"])
         cword = int(os.environ["COMP_CWORD"])
         args = cwords[1:cword]
 
@@ -627,6 +635,83 @@ def split_arg_string(string: str) -> list[str]:
         # the partial token as-is. The quote or escape character is in
         # lex.state, not lex.token.
         out.append(lex.token)
+
+    return out
+
+
+def split_arg_string_powershell(string: str) -> list[str]:
+    """Split an argument string using PowerShell's tokenizing rules, but
+    don't fail if the string is incomplete. Ignores a missing closing
+    quote or incomplete escape sequence and uses the partial token
+    as-is.
+
+    Unlike POSIX shells, a backslash is an ordinary character in
+    PowerShell (it is the path separator on Windows), the backtick is
+    the escape character, and a single quote inside a single-quoted
+    string is escaped by doubling it.
+
+    .. code-block:: python
+
+        split_arg_string_powershell(r"example C:\\Users\\ann\\doc")
+        ["example", "C:\\\\Users\\\\ann\\\\doc"]
+
+    :param string: String to split.
+
+    .. versionadded:: 8.6.0
+    """
+    out: list[str] = []
+    current: list[str] = []
+    in_single = False
+    in_double = False
+    started = False
+    i = 0
+
+    while i < len(string):
+        char = string[i]
+
+        if in_single:
+            if char == "'":
+                if i + 1 < len(string) and string[i + 1] == "'":
+                    current.append("'")
+                    i += 2
+                    continue
+
+                in_single = False
+            else:
+                current.append(char)
+        elif in_double:
+            if char == "`" and i + 1 < len(string):
+                current.append(string[i + 1])
+                i += 2
+                continue
+            elif char == '"':
+                in_double = False
+            else:
+                current.append(char)
+        elif char in " \t\r\n":
+            if started:
+                out.append("".join(current))
+                current = []
+                started = False
+        elif char == "'":
+            in_single = True
+            started = True
+        elif char == '"':
+            in_double = True
+            started = True
+        elif char == "`" and i + 1 < len(string):
+            current.append(string[i + 1])
+            started = True
+            i += 2
+            continue
+        else:
+            current.append(char)
+            started = True
+
+        i += 1
+
+    if started:
+        out.append("".join(current))
 
     return out
 

@@ -28,6 +28,11 @@ Unreleased
   keyword arguments like `color`. {issue}`2110` {pr}`3896`
 - Help pages no longer break a line within a hyphenated word, like an option
   name, or within a long word. {issue}`3362` {pr}`3902`
+- PowerShell completion no longer mangles Windows paths: the command line is
+  split with PowerShell's rules (a backslash is literal, the backtick
+  escapes, and a doubled single quote is an escaped quote) instead of POSIX
+  rules, and the generated script quotes the program name so a path with a
+  space still parses. {issue}`3915`
 
 ## Version 8.5.1
 
